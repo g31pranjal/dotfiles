@@ -1,0 +1,12 @@
+#!/bin/zsh
+# claude-helpers - Source all Claude session helpers and define aliases.
+
+source ~/bash_scripts/new-gwt-claude/new-gwt-claude
+source ~/bash_scripts/switch-gwt-claude/switch-gwt-claude
+source ~/bash_scripts/delete-gwt-claude/delete-gwt-claude
+
+alias clgn='new-gwt-claude'
+alias clgs='switch-gwt-claude'
+alias clgd='delete-gwt-claude'
+alias clsl=~/bash_scripts/list-claude-sessions/list-claude-sessions
+alias clsd=~/bash_scripts/delete-claude-sessions/delete-claude-sessions
