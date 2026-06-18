@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""claude-sessions - List, delete, or open Claude Code session transcripts.
+
+Usage:
+  claude-sessions list [all] [-c <cwd>]    List sessions (default: current cwd)
+  claude-sessions open                     Resume or start a session for the cwd
+  claude-sessions delete -i <session-id>   Delete one session's transcript
+  claude-sessions delete -c <cwd>          Delete the entire session folder
+                                           for that working directory
+
+Pass -f/--force to skip the confirmation prompt on delete.
+"""
+
+import argparse
+import os
+import random
+import select
+import subprocess
+import sys
+import termios
+import tty
+from datetime import datetime
+from pathlib import Path
+
+from claude_store import (
+    PROJECTS_DIR,
+    get_sessions,
+    delete_cwd,
+    delete_session_id,
+    die,
+    get_session_to_process_maps,
+)
+
+
+# ---- display ----------------------------------------------------------------
+
+def fmt_time(iso_ts, mtime):
+    if iso_ts:
+        try:
+            dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+
+
+def truncate(s, n):
+    s = s.replace("\n", " ").replace("\r", " ")
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def print_sessions(rows, active, dead):
+    def pids_for(sid):
+        if sid in active:
+            return [str(e["pid"]) for e in active[sid]]
+        if sid in dead:
+            return [str(e["pid"]) for e in dead[sid]]
+        return []
+
+    sid_w = max(len(r["session_id"]) for r in rows)
+    cwd_w = max(len(r["cwd"] or "") for r in rows)
+    pid_w = max(
+        (max((len(p) for p in pids_for(r["session_id"])), default=0) for r in rows),
+        default=0,
+    )
+    pid_w = max(pid_w, len("PID"))
+
+    use_color = sys.stdout.isatty()
+    RED = "\033[31m" if use_color else ""
+    GREEN = "\033[32m" if use_color else ""
+    GREY = "\033[90m" if use_color else ""
+    ORANGE = "\033[38;5;208m" if use_color else ""
+    RESET = "\033[0m" if use_color else ""
+
+    header = (
+        f"{'TIME':<16}  {'SESSION':<{sid_w}}  {'PID':<{pid_w}}  "
+        f"{'MSGS':>4}  {'CWD':<{cwd_w}}  TITLE / PREVIEW"
+    )
+    print(header)
+    print("-" * len(header))
+    blank_time = " " * 16
+    blank_sid = " " * sid_w
+    blank_msgs = " " * 4
+    blank_cwd_template = " " * cwd_w
+    for r in rows:
+        time_str = fmt_time(r["last_ts"], r["mtime"])
+        cwd = r["cwd"] or ""
+        label = r["title"] or r["first_msg"]
+        markers = ("↻" if r["resumed"] else " ") + ("*" if r["title"] else " ")
+        preview = truncate(label, 70)
+        sid = r["session_id"]
+        pids = pids_for(sid)
+
+        if sid in dead:
+            color, reset = GREY, RESET
+        elif r.get("no_transcript"):
+            color, reset = RED, RESET
+        elif r.get("cwd_inferred"):
+            color, reset = ORANGE, RESET
+        elif sid in active:
+            color, reset = GREEN, RESET
+        else:
+            color, reset = "", ""
+
+        first_pid = pids[0] if pids else ""
+        print(
+            f"{color}{time_str:<16}  {sid:<{sid_w}}  {first_pid:<{pid_w}}  "
+            f"{r['msg_count']:>4}  {cwd:<{cwd_w}}  {markers} {preview}{reset}"
+        )
+        for extra_pid in pids[1:]:
+            print(
+                f"{color}{blank_time}  {blank_sid}  {extra_pid:<{pid_w}}  "
+                f"{blank_msgs}  {blank_cwd_template}{reset}"
+            )
+
+
+# ---- list -------------------------------------------------------------------
+
+def synthetic_rows_for_processes(active, dead, seen_ids):
+    """Build placeholder rows for sessions with a registered PID but no transcript.
+    Walks active first so a session showing up in both maps is treated as active.
+    """
+    rows = []
+    seen = set(seen_ids)
+    for source in (active, dead):
+        for sid, entries in source.items():
+            if sid in seen:
+                continue
+            seen.add(sid)
+            starts = [e["started_ms"] for e in entries if isinstance(e.get("started_ms"), (int, float))]
+            ts_iso = None
+            if starts:
+                ts_iso = datetime.fromtimestamp(min(starts) / 1000).isoformat() + "Z"
+            rows.append({
+                "session_id": sid,
+                "cwd": entries[0].get("cwd"),
+                "title": None,
+                "first_msg": "(no transcript)",
+                "msg_count": 0,
+                "last_ts": ts_iso,
+                "mtime": 0,
+                "resumed": False,
+                "no_transcript": True,
+            })
+    return rows
+
+
+def cmd_list(cwd_filter=None):
+    if not PROJECTS_DIR.is_dir():
+        print(f"No such directory: {PROJECTS_DIR}", file=sys.stderr)
+        return 1
+
+    rows = get_sessions(cwd_filter)
+
+    active, dead = get_session_to_process_maps(cwd_filter=cwd_filter)
+
+    seen_ids = {r["session_id"] for r in rows}
+    rows.extend(synthetic_rows_for_processes(active, dead, seen_ids))
+
+    # Stable sort: time desc within each cwd group, cwd asc.
+    rows.sort(key=lambda r: r["last_ts"] or "", reverse=True)
+    rows.sort(key=lambda r: r["cwd"] or "")
+
+    if not rows:
+        print(f"No sessions found for cwd: {cwd_filter}" if cwd_filter else "No sessions found.")
+        return 0
+
+    print_sessions(rows, active, dead)
+    return 0
+
+
+# ---- delete -----------------------------------------------------------------
+
+def cmd_delete(args):
+    if args.session_id:
+        return delete_session_id(args.session_id, args.force)
+    return delete_cwd(args.cwd, args.force)
+
+
+# ---- open -------------------------------------------------------------------
+
+def interactive_pick(items, header):
+    """Arrow-key picker. Returns selected index, or None on cancel."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        die("interactive picker requires a TTY")
+
+    n = len(items)
+    selected = 0
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    def write(s):
+        sys.stdout.write(s)
+        sys.stdout.flush()
+
+    def render(redraw):
+        if redraw:
+            write(f"\r\x1b[{n + 1}A")
+        write(f"\x1b[2K\x1b[1m{header}\x1b[0m\r\n")
+        for i, item in enumerate(items):
+            write("\x1b[2K")
+            if i == selected:
+                write(f"  \x1b[7m> {item}\x1b[0m\r\n")
+            else:
+                write(f"    {item}\r\n")
+
+    try:
+        write("\x1b[?25l")  # hide cursor
+        render(redraw=False)
+        tty.setraw(fd)
+
+        while True:
+            ch = os.read(fd, 1).decode("utf-8", errors="ignore")
+            new_selected = selected
+            action = None
+
+            if ch == "\x1b":
+                rlist, _, _ = select.select([fd], [], [], 0.1)
+                if not rlist:
+                    action = "cancel"
+                else:
+                    seq = os.read(fd, 2).decode("utf-8", errors="ignore")
+                    if seq == "[A":
+                        new_selected = (selected - 1) % n
+                    elif seq == "[B":
+                        new_selected = (selected + 1) % n
+            elif ch in ("\r", "\n"):
+                action = "select"
+            elif ch == "k":
+                new_selected = (selected - 1) % n
+            elif ch == "j":
+                new_selected = (selected + 1) % n
+            elif ch in ("q", "\x03"):
+                action = "cancel"
+
+            if action == "cancel":
+                return None
+            if action == "select":
+                return selected
+            if new_selected != selected:
+                selected = new_selected
+                render(redraw=True)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        write("\x1b[?25h\n")
+
+
+def git_main_worktree():
+    try:
+        out = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    first = out.stdout.split("\n", 1)[0]
+    if first.startswith("worktree "):
+        return first[len("worktree "):].strip()
+    return None
+
+
+def git_current_branch():
+    try:
+        out = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True, text=True, check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return out.stdout.strip() or None
+
+
+def cmd_open():
+    main_wt = git_main_worktree()
+    if main_wt is None:
+        die("not inside a git repository")
+    branch = git_current_branch()
+    if not branch:
+        die("could not determine current branch (detached HEAD?)")
+
+    repo = Path(main_wt).name
+    cwd = str(Path.cwd())
+    sessions = get_sessions(cwd)
+
+    if not sessions:
+        name = f"{repo}/{branch}/s1"
+        print(f"No existing sessions for {cwd}. Starting new: {name}")
+        os.execvp("claude", ["claude", "--name", name])
+
+    new_name = f"{repo}/{branch}/s{random.randint(10000, 99999)}"
+
+    items = []
+    for s in sessions:
+        label = s["title"] or s["first_msg"] or s["session_id"]
+        time_str = fmt_time(s["last_ts"], s["mtime"])
+        items.append(f"[{time_str}] {truncate(label, 60)} ({s['msg_count']} msgs)")
+    items.append(f"start new: {new_name}")
+
+    chosen = interactive_pick(
+        items,
+        f"Sessions for {cwd} (j/k/arrows, enter to select, q to cancel):",
+    )
+
+    if chosen is None:
+        print("Cancelled.")
+        return 0
+    if chosen == len(sessions):
+        os.execvp("claude", ["claude", "--name", new_name])
+    sid = sessions[chosen]["session_id"]
+    os.execvp("claude", ["claude", "--resume", sid])
+
+
+# ---- main -------------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="claude-sessions",
+        description="List or delete Claude Code session transcripts.",
+    )
+    sub = ap.add_subparsers(dest="cmd", required=True, metavar="{list,open,delete}")
+
+    list_p = sub.add_parser("list", help="List Claude Code sessions for the current cwd (or pass 'all').")
+    list_p.add_argument("scope", nargs="?", choices=["all"], default=None,
+                        help="Pass 'all' to list sessions across every directory")
+    list_p.add_argument("-c", "--cwd", dest="cwd", metavar="PATH",
+                        help="Only list sessions whose cwd matches this path (defaults to current directory)")
+
+    sub.add_parser("open", help="Resume an existing session for the cwd, or start a new one.")
+
+    del_p = sub.add_parser("delete", help="Delete Claude Code session transcripts.")
+    target = del_p.add_mutually_exclusive_group(required=True)
+    target.add_argument("-i", "--id", dest="session_id", metavar="UUID",
+                        help="Delete the transcript for this session ID")
+    target.add_argument("-c", "--cwd", dest="cwd", metavar="PATH",
+                        help="Delete the entire session folder for this cwd")
+    del_p.add_argument("-f", "--force", action="store_true",
+                       help="Skip confirmation")
+
+    args = ap.parse_args()
+    
+    if args.cmd == "list":
+        if args.cwd:
+            return cmd_list(args.cwd)
+        if args.scope == "all":
+            return cmd_list(None)
+        return cmd_list(".")
+    if args.cmd == "open":
+        return cmd_open()
+    if args.cmd == "delete":
+        return cmd_delete(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

@@ -3,12 +3,22 @@
 
 CLAUDE_HELPERS_DIR="${0:A:h}"
 
+# Make the claude-sessions script directly callable on PATH.
+if [[ ":$PATH:" != *":$CLAUDE_HELPERS_DIR/claude-sessions:"* ]]; then
+  export PATH="$CLAUDE_HELPERS_DIR/claude-sessions:$PATH"
+fi
+
 source "$CLAUDE_HELPERS_DIR/new-gwt-claude/new-gwt-claude"
 source "$CLAUDE_HELPERS_DIR/switch-gwt-claude/switch-gwt-claude"
 source "$CLAUDE_HELPERS_DIR/delete-gwt-claude/delete-gwt-claude"
+source "$CLAUDE_HELPERS_DIR/back-gwt-claude/back-gwt-claude"
 
 alias clgn='new-gwt-claude'
 alias clgs='switch-gwt-claude'
 alias clgd='delete-gwt-claude'
-alias clsl="$CLAUDE_HELPERS_DIR/list-claude-sessions/list-claude-sessions"
-alias clsd="$CLAUDE_HELPERS_DIR/delete-claude-sessions/delete-claude-sessions"
+alias clgb='back-gwt-claude'
+alias clsl='claude-sessions list'
+alias clso='claude-sessions open'
+alias clsd='claude-sessions delete'
+alias cl='claude --continue 2>/dev/null || claude'
+alias cln='claude'

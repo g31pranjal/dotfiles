@@ -31,7 +31,7 @@ delete-gwt-claude() {
 
     cd "$main_worktree" || cd ~
     git worktree remove "$current_worktree" --force
-    _delete_session_folder "$current_worktree"
+    claude-sessions delete -c "$current_worktree" -f 2>/dev/null || true
     echo "Deleted worktree '$current_branch'."
     return 0
   fi
@@ -149,26 +149,9 @@ delete-gwt-claude() {
 
   # Remove worktree
   git worktree remove "$chosen_path" --force
-  _delete_session_folder "$chosen_path"
+  claude-sessions delete -c "$chosen_path" -f 2>/dev/null || true
 
   echo "Deleted worktree '$chosen_branch'."
-}
-
-# Encode a cwd into the directory name Claude Code uses under
-# ~/.claude/projects/ (slashes and underscores both become dashes), and
-# remove that directory if present.
-_delete_session_folder() {
-  local cwd="$1"
-  local encoded="${cwd//\//-}"
-  encoded="${encoded//_/-}"
-  local sessions_dir="$HOME/.claude/projects/$encoded"
-
-  if [[ -d "$sessions_dir" ]]; then
-    local count
-    count=$(find "$sessions_dir" -maxdepth 1 -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')
-    rm -rf "$sessions_dir"
-    echo "Removed $count Claude session(s) at $sessions_dir"
-  fi
 }
 
 # If script is executed directly (not sourced), run the function

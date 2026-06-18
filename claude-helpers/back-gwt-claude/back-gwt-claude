@@ -1,0 +1,27 @@
+#!/bin/zsh
+# back-gwt-claude - cd to the base (main) git worktree if currently inside a non-main worktree.
+# Source this file or use it as a zsh plugin function.
+# Usage: back-gwt-claude
+
+back-gwt-claude() {
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "Error: not inside a git repository"
+    return 1
+  fi
+
+  local main_worktree current_worktree
+  main_worktree=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+  current_worktree=$(git rev-parse --show-toplevel)
+
+  if [[ "$current_worktree" == "$main_worktree" ]]; then
+    return 0
+  fi
+
+  cd "$main_worktree"
+}
+
+# If script is executed directly (not sourced), run the function
+if [[ "$ZSH_EVAL_CONTEXT" != *:file* ]]; then
+  back-gwt-claude "$@"
+fi
+  

@@ -22,7 +22,8 @@ It also works when executed directly — Claude runs in the worktree, but your s
 
 1. **Validates** the environment:
    - Must be inside a git repository
-   - Must be on the `main` branch
+   - If run from a non-main worktree, automatically `cd`s to the main worktree first
+   - The main worktree must be on the `main` branch
    - The specified branch must not already exist
    - Working tree must be clean (no staged or unstaged changes)
    - The worktrees parent directory (`../<repo>-worktrees/`) must already exist

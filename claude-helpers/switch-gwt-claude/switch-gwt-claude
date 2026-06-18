@@ -124,8 +124,7 @@ switch-gwt-claude() {
   # cd to the selected worktree
   cd "$chosen_path" || return 1
 
-  # Resume most recent Claude session or start new with branch as session name
-  claude --continue 2>/dev/null || claude --name "$chosen_branch"
+  claude-sessions open
 }
 
 # If script is executed directly (not sourced), run the function

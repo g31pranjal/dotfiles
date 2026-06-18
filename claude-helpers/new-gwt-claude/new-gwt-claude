@@ -16,6 +16,13 @@ new-gwt-claude() {
     return 1
   fi
 
+  local main_worktree current_worktree
+  main_worktree=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+  current_worktree=$(git rev-parse --show-toplevel)
+  if [[ "$current_worktree" != "$main_worktree" ]]; then
+    cd "$main_worktree" || return 1
+  fi
+
   local current_branch
   current_branch=$(git branch --show-current)
   if [[ "$current_branch" != "main" ]]; then
@@ -51,7 +58,7 @@ new-gwt-claude() {
   echo "Worktree created at: $abs_worktree_path"
 
   cd "$abs_worktree_path" || return 1
-  claude --name "$branch_name"
+  claude-sessions open
 }
 
 # If script is executed directly (not sourced), run the function
