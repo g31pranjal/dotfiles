@@ -6,9 +6,11 @@ List, open, or delete Claude Code session transcripts. Combines `clsl`, `clso`, 
 
 ```sh
 claude-sessions list                     # sessions for current cwd
-claude-sessions list all                 # every session, every project
+claude-sessions list -a                  # every session, every project
 claude-sessions list -c <cwd-path>       # sessions for a specific path
 claude-sessions open                     # resume or start a session for the cwd
+claude-sessions open -n                  # always start a new session, skip the picker
+claude-sessions open -r                  # claude --continue (most recent session)
 claude-sessions delete -i <session-id>
 claude-sessions delete -c <cwd-path>
 ```
@@ -27,7 +29,7 @@ Aliased once `claude-helpers` is sourced:
 
 Walks `~/.claude/projects/` and prints one row per session, most recent first.
 
-By default, only sessions whose cwd matches the **current directory** are shown. Pass `all` as a positional to show every session across every project, or `-c <path>` to filter to a specific directory (the path is normalized to absolute before matching).
+By default, only sessions whose cwd matches the **current directory** are shown. Pass `-a`/`--all` to show every session across every project, or `-c <path>` to filter to a specific directory (the path is normalized to absolute before matching).
 
 ```
 TIME              SESSION                               PID    MSGS  CWD             TITLE / PREVIEW
@@ -52,6 +54,8 @@ Resume a session for the current directory, or start a new one. Names the sessio
   - The last entry is `start new: <repo>/<branch>/s<5-digit-random>`.
   - Navigate with `↑`/`↓` or `j`/`k`, `Enter` to select, `q` or `Esc` to cancel.
   - Picking an existing session runs `claude --resume <id>`; picking the new entry runs `claude --name <repo>/<branch>/s<random>`.
+- **Pass `-n` / `--new`** → skip the picker entirely. Always starts a new session — `s1` if there are no existing sessions for the cwd, otherwise `s<5-digit-random>`.
+- **Pass `-r` / `--resume`** → skip the picker and run `claude --continue` (resume the most recent session, regardless of cwd). Mutually exclusive with `-n`.
 
 Where:
 - `<repo>` = basename of the repo's main worktree.
@@ -78,11 +82,13 @@ Only touches transcript files / folders — does **not** clean up `~/.claude/ses
 ```sh
 # List
 clsl                         # current cwd only
-clsl all                     # every session, every project
+clsl -a                      # every session, every project
 clsl -c ~/repos/foo          # specific directory
 
 # Open
 clso                         # picker (or auto-new if no sessions yet)
+clso -n                      # always new session, skip picker
+clso -r                      # claude --continue (most recent session)
 
 # Delete one session
 clsd -i 23b2bb41-f162-49d6-a1b8-9b0cdd5e2816

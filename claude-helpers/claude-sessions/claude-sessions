@@ -2,7 +2,7 @@
 """claude-sessions - List, delete, or open Claude Code session transcripts.
 
 Usage:
-  claude-sessions list [all] [-c <cwd>]    List sessions (default: current cwd)
+  claude-sessions list [-a] [-c <cwd>]     List sessions (default: current cwd)
   claude-sessions open                     Resume or start a session for the cwd
   claude-sessions delete -i <session-id>   Delete one session's transcript
   claude-sessions delete -c <cwd>          Delete the entire session folder
@@ -270,7 +270,10 @@ def git_current_branch():
     return out.stdout.strip() or None
 
 
-def cmd_open():
+def cmd_open(force_new=False, resume_last=False):
+    if resume_last:
+        os.execvp("claude", ["claude", "--continue"])
+
     main_wt = git_main_worktree()
     if main_wt is None:
         die("not inside a git repository")
@@ -281,6 +284,12 @@ def cmd_open():
     repo = Path(main_wt).name
     cwd = str(Path.cwd())
     sessions = get_sessions(cwd)
+
+    if force_new:
+        suffix = "s1" if not sessions else f"s{random.randint(10000, 99999)}"
+        name = f"{repo}/{branch}/{suffix}"
+        print(f"Starting new: {name}")
+        os.execvp("claude", ["claude", "--name", name])
 
     if not sessions:
         name = f"{repo}/{branch}/s1"
@@ -319,13 +328,19 @@ def main():
     )
     sub = ap.add_subparsers(dest="cmd", required=True, metavar="{list,open,delete}")
 
-    list_p = sub.add_parser("list", help="List Claude Code sessions for the current cwd (or pass 'all').")
-    list_p.add_argument("scope", nargs="?", choices=["all"], default=None,
-                        help="Pass 'all' to list sessions across every directory")
-    list_p.add_argument("-c", "--cwd", dest="cwd", metavar="PATH",
-                        help="Only list sessions whose cwd matches this path (defaults to current directory)")
+    list_p = sub.add_parser("list", help="List Claude Code sessions for the current cwd (or pass -a for all).")
+    list_scope = list_p.add_mutually_exclusive_group()
+    list_scope.add_argument("-a", "--all", dest="all_dirs", action="store_true",
+                            help="List sessions across every directory")
+    list_scope.add_argument("-c", "--cwd", dest="cwd", metavar="PATH",
+                            help="Only list sessions whose cwd matches this path (defaults to current directory)")
 
-    sub.add_parser("open", help="Resume an existing session for the cwd, or start a new one.")
+    open_p = sub.add_parser("open", help="Resume an existing session for the cwd, or start a new one.")
+    open_mode = open_p.add_mutually_exclusive_group()
+    open_mode.add_argument("-n", "--new", dest="new", action="store_true",
+                           help="Skip the picker and always start a new session")
+    open_mode.add_argument("-r", "--resume", dest="resume", action="store_true",
+                           help="Skip the picker and run `claude --continue` (most recent session)")
 
     del_p = sub.add_parser("delete", help="Delete Claude Code session transcripts.")
     target = del_p.add_mutually_exclusive_group(required=True)
@@ -341,11 +356,11 @@ def main():
     if args.cmd == "list":
         if args.cwd:
             return cmd_list(args.cwd)
-        if args.scope == "all":
+        if args.all_dirs:
             return cmd_list(None)
         return cmd_list(".")
     if args.cmd == "open":
-        return cmd_open()
+        return cmd_open(force_new=args.new, resume_last=args.resume)
     if args.cmd == "delete":
         return cmd_delete(args)
 

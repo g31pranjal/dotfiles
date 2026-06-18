@@ -26,8 +26,8 @@ A subcommand-style CLI over Claude's session data at `~/.claude/projects/` (tran
 
 | Alias  | Command                  | Description |
 |--------|--------------------------|-------------|
-| `clsl` | `claude-sessions list`   | Lists sessions for the current cwd. Pass `all` for every project, or `-c <path>` for a specific directory. |
-| `clso` | `claude-sessions open`   | Arrow-key picker over the cwd's existing sessions plus a "start new" entry; auto-launches `<repo>/<branch>/s1` if no sessions exist yet. |
+| `clsl` | `claude-sessions list`   | Lists sessions for the current cwd. Pass `-a` for every project, or `-c <path>` for a specific directory (mutually exclusive). |
+| `clso` | `claude-sessions open`   | Arrow-key picker over the cwd's existing sessions plus a "start new" entry; auto-launches `<repo>/<branch>/s1` if no sessions exist yet. Pass `-n` to always start a new session, or `-r` to `claude --continue` the most recent (mutually exclusive). |
 | `clsd` | `claude-sessions delete` | `-i <session-id>` to drop one transcript, `-c <cwd>` to drop the whole folder, `-f` to skip the confirmation. |
 
 `clsl` color-codes the rows: grey = dead PID, red = live process with no transcript yet, orange = transcript with no recorded cwd (decoded from folder name), green = live `claude` process. Markers: `*` custom title, `↻` resumed session.
