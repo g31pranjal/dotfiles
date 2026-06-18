@@ -1,6 +1,11 @@
 # claude-helpers
 
-A small collection of zsh + Python helpers for managing git worktrees and Claude Code session transcripts.
+A small collection of zsh + Python helpers for managing Claude Code sessions and the git worktrees they're tied to.
+
+There are two layers:
+
+- [**`claude-sessions`**](claude-sessions/) — a Python CLI that lists, opens, or deletes Claude Code session transcripts. The data layer; callable directly or via the `cls*` aliases.
+- [**`clg*` worktree helpers**](#worktree-helpers-clg) — zsh functions that create / switch / delete git worktrees and hand the session lifecycle off to `claude-sessions`.
 
 ## Setup
 
@@ -10,56 +15,53 @@ Source the entry-point file from your `.zshrc`:
 source /path/to/claude-helpers/claude-helpers
 ```
 
-This registers the worktree functions, wires up aliases for the standalone Python tools, and resolves all paths relative to the `claude-helpers` directory itself, so it works regardless of where you've placed it.
+This:
+- Prepends `<claude-helpers>/claude-sessions/` to `PATH`, so `claude-sessions` is callable from anywhere
+- Defines the `clg*` worktree functions and the `cls*` / `cl` / `cln` aliases
+- Resolves all paths relative to the entry-point's own location, so the directory can live anywhere on disk
 
-## Commands
+## `claude-sessions` (the Python tool)
 
-| Alias | Command | Description |
-|-------|---------|-------------|
-| `clgn` | [new-gwt-claude](new-gwt-claude/) | Create a new git worktree from `main` and launch Claude Code in it. |
-| `clgs` | [switch-gwt-claude](switch-gwt-claude/) | Interactively pick a worktree, `cd` into it, and resume (or start) a Claude session. |
-| `clgd` | [delete-gwt-claude](delete-gwt-claude/) | Delete a worktree and its associated Claude session folder. |
-| `clgb` | [back-gwt-claude](back-gwt-claude/) | `cd` to the base (main) worktree if currently inside a non-main worktree. |
-| `clsl` | [claude-sessions list](claude-sessions/) | List all Claude Code sessions across projects, with PID / message count / preview. |
-| `clso` | [claude-sessions open](claude-sessions/) | Resume an existing session for the cwd, or start a new one named `<repo>/<branch>/s…`. |
-| `clsd` | [claude-sessions delete](claude-sessions/) | Delete Claude Code session transcripts by session ID or by working directory. |
+A subcommand-style CLI over Claude's session data at `~/.claude/projects/` (transcripts) and `~/.claude/sessions/` (live PID metadata). See the [full docs](claude-sessions/).
 
-### Worktree commands (`clg*`)
+| Alias  | Command                  | Description |
+|--------|--------------------------|-------------|
+| `clsl` | `claude-sessions list`   | Lists sessions for the current cwd. Pass `all` for every project, or `-c <path>` for a specific directory. |
+| `clso` | `claude-sessions open`   | Arrow-key picker over the cwd's existing sessions plus a "start new" entry; auto-launches `<repo>/<branch>/s1` if no sessions exist yet. |
+| `clsd` | `claude-sessions delete` | `-i <session-id>` to drop one transcript, `-c <cwd>` to drop the whole folder, `-f` to skip the confirmation. |
 
-These wrap `git worktree` with the convention that worktrees live at `../<repo>-worktrees/<branch>` and each worktree gets its own named Claude session.
+`clsl` color-codes the rows: grey = dead PID, red = live process with no transcript yet, orange = transcript with no recorded cwd (decoded from folder name), green = live `claude` process. Markers: `*` custom title, `↻` resumed session.
 
-- `clgn <branch>` — must be on a clean `main`; creates the branch, the worktree, and runs `claude --name <branch>`.
-- `clgs` — interactive picker (j/k/arrows, enter, q to quit). Prefers `claude --continue`; falls back to a fresh named session.
-- `clgd` — if you're inside a non-main worktree, deletes the current one. Otherwise shows a picker of non-main worktrees. Force-removes the worktree and wipes the matching `~/.claude/projects/<encoded-cwd>/` folder.
-- `clgb` — jump back to the base (main) worktree. No-op if you're already there.
+## Worktree helpers (`clg*`)
 
-### Session commands (`cls*`)
+zsh functions that wrap `git worktree`, with the convention that worktrees live at `../<repo>-worktrees/<branch>`. Each command delegates session management to `claude-sessions`.
 
-These operate on Claude Code's transcript store at `~/.claude/projects/`.
+| Alias  | Command               | Description |
+|--------|-----------------------|-------------|
+| `clgn` | [new-gwt-claude](new-gwt-claude/)         | From a clean `main`, create a `<branch>` worktree at `../<repo>-worktrees/<branch>`, `cd` in, and run `claude-sessions open`. If run from inside a non-main worktree, hops to main first. |
+| `clgs` | [switch-gwt-claude](switch-gwt-claude/)   | Arrow-key picker over all worktrees of the repo; `cd`s into the chosen one and runs `claude-sessions open`. |
+| `clgd` | [delete-gwt-claude](delete-gwt-claude/)   | If you're inside a non-main worktree, deletes the current one. Otherwise picks from non-main worktrees. Force-removes the worktree, then `claude-sessions delete -c <path> -f` to drop the matching session folder. |
+| `clgb` | [back-gwt-claude](back-gwt-claude/)       | `cd` to the base (main) worktree. No-op if you're already there. |
 
-- `clsl` — by default, lists sessions for the current cwd. Pass `all` for every session across every project, or `-c <path>` to filter to a specific directory. Color-coded: green = active process, grey = dead PID, red = live process with no transcript yet. Markers: `*` custom title, `↻` resumed session.
-- `clso` — arrow-key picker (`↑`/`↓` or `j`/`k`, enter, q/Esc to cancel) over the cwd's existing sessions, with a final "start new" entry; auto-launches `<repo>/<branch>/s1` if no sessions exist yet.
-- `clsd -i <session-id>` — delete a single transcript `.jsonl`.
-- `clsd -c <cwd>` — delete the entire encoded session folder for a working directory.
-- Add `-f` to skip the confirmation prompt.
+All four require the worktrees parent directory `../<repo>-worktrees/` to already exist (one-time `mkdir`).
 
 ## Layout
 
 ```
 claude-helpers/
 ├── claude-helpers                  # entry point — source this
+├── claude-sessions/                # Python CLI (claude-sessions + claude_store)
 ├── new-gwt-claude/
 ├── switch-gwt-claude/
 ├── delete-gwt-claude/
-├── back-gwt-claude/
-└── claude-sessions/
+└── back-gwt-claude/
 ```
 
-Each subdirectory contains the script and (where applicable) a per-command `.md` with full usage, controls, and prerequisites.
+Each subdirectory has a README with full usage, controls, and prerequisites.
 
 ## Prerequisites
 
 - zsh
-- Python 3 (for `clsl` and `clsd`)
+- Python 3 (for `claude-sessions`)
 - Claude Code CLI on `PATH` as `claude`
 - Git
